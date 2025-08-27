@@ -159,7 +159,6 @@ class TestConsumer(AsyncWebsocketConsumer):
 
         score, is_correct = save_info
 
-        # faqat adminlarga real-time natija
         leaderboard = await self._get_leaderboard(self.group_obj.id)
         if self._is_admin():
             await self.channel_layer.group_send(
@@ -176,7 +175,7 @@ class TestConsumer(AsyncWebsocketConsumer):
                 },
             )
 
-    # --------- event handlers ---------
+
 
     async def system_message(self, event):
         await self._send_json({"type": "message", **event["payload"]})

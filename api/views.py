@@ -61,10 +61,8 @@ class AddQuestion(APIView):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
 class EditQuestion(APIView):
     serializer_class = QuestionsSerializer
-
     def get(self, request, group_id, question_id):
         question = Questions.objects.get(id=question_id, group__code=group_id)
         serializers = QuestionsSerializer(question)
@@ -88,3 +86,6 @@ class AllQuestions(APIView):
         serializers = QuestionsSerializer(questions, many=True)
         return Response(serializers.data, status = status.HTTP_200_OK)
 
+class Result(APIView):
+    def get(self, user_id):
+        result = Result.objects.filter(user = user_id)

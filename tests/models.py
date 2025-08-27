@@ -1,12 +1,5 @@
 from django.db import models
-
-class User(models.Model):
-    username = models.CharField(max_length=20, unique=True)
-    password = models.CharField(max_length=20)
-    avatar = models.ImageField(upload_to='user', null=True, blank=True)
-    is_admin = models.BooleanField(default=False)
-    def __str__(self):
-        return self.username
+from accounts.models import CustomUser as User
 class Category(models.Model):
     name = models.CharField(max_length=20)
     def __str__(self):
@@ -15,7 +8,7 @@ class Group(models.Model):
     name = models.CharField(max_length=20)
     description = models.TextField(null=True, blank=True)
     category = models.ForeignKey('Category', on_delete=models.CASCADE)
-    admin = models.ForeignKey('User', on_delete=models.CASCADE)
+    admin = models.ForeignKey(User, on_delete=models.CASCADE)
     pin = models.IntegerField()
     code = models.CharField()
     time = models.IntegerField()
@@ -44,19 +37,19 @@ class Answer(models.Model):
     def __str__(self):
         return self.question.group.name
 class Result(models.Model):
-    user = models.ForeignKey('User', on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
     group = models.ForeignKey('Group', on_delete=models.CASCADE)
     score = models.IntegerField()
     def __str__(self):
         return self.user.username
 class GroupUsers(models.Model):
     group = models.ForeignKey('Group', on_delete=models.CASCADE)
-    user = models.ForeignKey('User', on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
     joined_date = models.DateTimeField(auto_now_add=True)
     def __str__(self):
         return self.group.name
 class UserAnswers(models.Model):
-    user = models.ForeignKey('User', on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
     answer = models.ForeignKey('Answer', on_delete=models.CASCADE)
     question = models.ForeignKey('Questions', on_delete=models.CASCADE)
     is_correct = models.BooleanField(default=False)
