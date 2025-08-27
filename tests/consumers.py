@@ -1,15 +1,38 @@
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from tests.models import User, Group, Questions, Answer, Result, UserAnswers
+from django.utils import timezone
+from django.db import transaction
+from django.db.models import F, Sum
+
+from tests.models import (
+    User as AppUser,
+    Group,
+    Questions,
+    Answer,
+    Result,
+    GroupUsers,
+    UserAnswers,
+)
+
 
 class TestConsumer(AsyncWebsocketConsumer):
+
+
     async def connect(self):
-        self.room_code = self.scope['url_route']['kwargs']['room_code']
+        self.room_code = self.scope["url_route"]["kwargs"]["room_code"]
         self.room_group_name = f"test_{self.room_code}"
 
-        self.user = self.scope['user'] if self.scope['user'].is_authenticated else None
-        self.role = "admin" if self.user and self.user.is_admin else "student"
+        auth_user = self.scope.get("user", None)
+        self.app_user = await self._map_to_app_user(auth_user)
+
+        if not self.app_user:
+            await self.close(code=4401)
+            return
+
+        self.group_obj = await self._ensure_membership(self.room_code, self.app_user.id)
+
+        self.role = "admin" if self.app_user.is_admin else "student"
 
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
@@ -17,128 +40,288 @@ class TestConsumer(AsyncWebsocketConsumer):
         await self.channel_layer.group_send(
             self.room_group_name,
             {
-                "type": "chat_message",
-                "message": f"{self.user.username if self.user else 'Guest'} ({self.role}) qo'shildi"
-            }
+                "type": "system_message",
+                "payload": {
+                    "message": f"{self.app_user.username} ({self.role}) qo'shildi",
+                },
+            },
         )
 
     async def disconnect(self, close_code):
         await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
+        if getattr(self, "app_user", None):
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    "type": "system_message",
+                    "payload": {
+                        "message": f"{self.app_user.username} chiqib ketdi",
+                    },
+                },
+            )
+
     async def receive(self, text_data):
-        data = json.loads(text_data)
-        action = data.get("action")
 
-        # Admin boshqaruvi
-        if self.role == "admin":
+        try:
+            data = json.loads(text_data or "{}")
+            action = data.get("action")
+
+            if not action:
+                return await self._send_error("action yo‘q")
+
             if action == "start_test":
-                await self.channel_layer.group_send(self.room_group_name, {
-                    "type": "test_started",
-                    "message": "Test boshlandi!"
-                })
-            elif action == "next_question":
+                if not self._is_admin():
+                    return await self._send_error("Ruxsat yo‘q (admin kerak).")
+                await self._start_test()
+                return
+
+            if action == "next_question":
+                if not self._is_admin():
+                    return await self._send_error("Ruxsat yo‘q (admin kerak).")
                 question_id = data.get("question_id")
-                question_data = await self.get_question_data(question_id)
-                await self.channel_layer.group_send(self.room_group_name, {
-                    "type": "send_question",
-                    "question": question_data
-                })
-            elif action == "finish_test":
-                group_id = data.get("group_id")
-                results = await self.get_final_results(group_id)
-                await self.channel_layer.group_send(self.room_group_name, {
-                    "type": "final_results",
-                    "results": results
-                })
+                if not question_id:
+                    return await self._send_error("question_id kerak.")
+                await self._broadcast_question(question_id)
+                return
 
-        # Student javob yuboradi
-        elif self.role == "student" and action == "submit_answer":
-            question_id = data.get("question_id")
-            answer_id = data.get("answer_id")
-            score, is_correct = await self.check_answer_and_save(question_id, answer_id, self.user.id)
+            if action == "finish_test":
+                if not self._is_admin():
+                    return await self._send_error("Ruxsat yo‘q (admin kerak).")
+                await self._finish_test()
+                return
 
-            # Javobdan keyin real-time admin va studentlarga yuborish
-            leaderboard = await self.get_leaderboard(self.room_code)
-            await self.channel_layer.group_send(self.room_group_name, {
-                "type": "student_answer",
-                "user": self.user.username,
-                "question_id": question_id,
-                "score": score,
-                "is_correct": is_correct,
-                "leaderboard": leaderboard
-            })
+            if action == "submit_answer":
+                if self._is_admin():
+                    return await self._send_error("Admin javob yubora olmaydi.")
+                question_id = data.get("question_id")
+                answer_id = data.get("answer_id")
+                if not question_id or not answer_id:
+                    return await self._send_error("question_id va answer_id kerak.")
+                await self._handle_submit_answer(question_id, answer_id)
+                return
 
-    @database_sync_to_async
-    def get_question_data(self, question_id):
-        question = Questions.objects.get(id=question_id)
-        answers = [{"id": a.id, "text": a.answer} for a in question.answers.all()]
-        return {
-            "id": question.id,
-            "text": question.question,
-            "answers": answers
-        }
+            if action == "get_all_results":
+                await self._send_all_results()
+                return
 
-    @database_sync_to_async
-    def check_answer_and_save(self, question_id, answer_id, user_id):
-        question = Questions.objects.get(id=question_id)
-        answer = Answer.objects.get(id=answer_id, question=question)
-        score = 10 if answer.is_correct else 0
+            if action == "get_leaderboard":
+                await self._send_leaderboard()
+                return
 
-        UserAnswers.objects.create(
-            user_id=user_id,
-            question=question,
-            answer=answer,
-            is_correct=answer.is_correct,
-            score=score
+            return await self._send_error("Noma'lum action.")
+        except Exception as e:
+            return await self._send_error(str(e))
+
+
+
+    async def _start_test(self):
+        group_id = await self._mark_group_started(self.group_obj.id)
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                "type": "test_started",
+                "payload": {
+                    "message": "Test boshlandi!",
+                    "group_id": group_id,
+                },
+            },
         )
 
-        result, created = Result.objects.get_or_create(user_id=user_id, group=question.group)
-        result.score += score
-        result.save()
-        return score, answer.is_correct
+    async def _broadcast_question(self, question_id: int):
+        q = await self._get_question_data_safe(question_id, self.group_obj.id)
+        if not q:
+            return await self._send_error("Savol topilmadi yoki bu roomga tegishli emas.")
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                "type": "send_question",
+                "payload": {"question": q},
+            },
+        )
 
-    @database_sync_to_async
-    def get_leaderboard(self, room_code):
-        group = Group.objects.get(code=room_code)
-        leaderboard = Result.objects.filter(group=group).values("user__username", "score").order_by("-score")
-        return list(leaderboard)
+    async def _finish_test(self):
+        group_results = await self._mark_group_finished_and_collect_results(self.group_obj.id)
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                "type": "final_results",
+                "payload": {
+                    "results": group_results,
+                },
+            },
+        )
 
-    @database_sync_to_async
-    def get_final_results(self, group_id):
-        results = Result.objects.filter(group_id=group_id).values("user__username", "score").order_by("-score")
-        return list(results)
+    async def _handle_submit_answer(self, question_id: int, answer_id: int):
+        save_info = await self._check_answer_and_save_safe(
+            question_id=question_id,
+            answer_id=answer_id,
+            user_id=self.app_user.id,
+            group_id=self.group_obj.id,
+        )
+        if not save_info:
+            return await self._send_error("Javobni saqlashda xatolik yoki noto‘g‘ri IDs.")
 
-    # WebSocket orqali yuboriladigan eventlar
-    async def student_answer(self, event):
-        await self.send(text_data=json.dumps({
-            "type": "student_answer",
-            "user": event["user"],
-            "question_id": event["question_id"],
-            "score": event["score"],
-            "is_correct": event["is_correct"],
-            "leaderboard": event["leaderboard"]
-        }))
+        score, is_correct = save_info
+        leaderboard = await self._get_leaderboard(self.group_obj.id)
 
-    async def send_question(self, event):
-        await self.send(text_data=json.dumps({
-            "type": "question",
-            "question": event["question"]
-        }))
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                "type": "student_answer",
+                "payload": {
+                    "user": self.app_user.username,
+                    "question_id": question_id,
+                    "score": score,
+                    "is_correct": is_correct,
+                    "leaderboard": leaderboard,
+                },
+            },
+        )
 
-    async def final_results(self, event):
-        await self.send(text_data=json.dumps({
-            "type": "final_results",
-            "results": event["results"]
-        }))
+    async def _send_all_results(self):
+        results = await self._get_all_results(self.app_user.id)
+        await self._send_json(
+            {
+                "type": "all_results",
+                "results": results,
+            }
+        )
+
+    async def _send_leaderboard(self):
+        leaderboard = await self._get_leaderboard(self.group_obj.id)
+        await self._send_json(
+            {
+                "type": "leaderboard",
+                "leaderboard": leaderboard,
+            }
+        )
+
+
+    async def system_message(self, event):
+        await self._send_json({"type": "message", **event["payload"]})
 
     async def test_started(self, event):
-        await self.send(text_data=json.dumps({
-            "type": "message",
-            "message": event["message"]
-        }))
+        await self._send_json({"type": "test_started", **event["payload"]})
 
-    async def chat_message(self, event):
-        await self.send(text_data=json.dumps({
-            "type": "message",
-            "message": event["message"]
-        }))
+    async def send_question(self, event):
+        await self._send_json({"type": "question", **event["payload"]})
+
+    async def final_results(self, event):
+        await self._send_json({"type": "final_results", **event["payload"]})
+
+    async def student_answer(self, event):
+        await self._send_json({"type": "student_answer", **event["payload"]})
+
+    async def _send_error(self, message: str):
+        await self.send(text_data=json.dumps({"type": "error", "error": message}))
+
+    async def _send_json(self, payload: dict):
+        await self.send(text_data=json.dumps(payload))
+
+    def _is_admin(self) -> bool:
+        return bool(self.app_user and self.app_user.is_admin)
+
+
+    @database_sync_to_async
+    def _map_to_app_user(self, auth_user):
+
+        try:
+            if not auth_user or not getattr(auth_user, "is_authenticated", False):
+                return None
+            username = getattr(auth_user, "username", None)
+            if not username:
+                return None
+            app_user, _ = AppUser.objects.get_or_create(
+                username=username,
+                defaults={"is_admin": getattr(auth_user, "is_staff", False)},
+            )
+            return app_user
+        except Exception:
+            return None
+
+    @database_sync_to_async
+    def _ensure_membership(self, room_code: str, user_id: int):
+
+        group = Group.objects.get(code=room_code)
+        GroupUsers.objects.get_or_create(group=group, user_id=user_id)
+        return group
+
+    @database_sync_to_async
+    def _mark_group_started(self, group_id: int):
+        Group.objects.filter(id=group_id).update(is_active=True, start_time=timezone.now())
+        return group_id
+
+    @database_sync_to_async
+    def _mark_group_finished_and_collect_results(self, group_id: int):
+        Group.objects.filter(id=group_id).update(is_active=False, end_time=timezone.now())
+        qs = (
+            Result.objects.filter(group_id=group_id)
+            .values("user__username")
+            .annotate(score=Sum("score"))
+            .order_by("-score")
+        )
+        return list(qs)
+
+    @database_sync_to_async
+    def _get_question_data_safe(self, question_id: int, group_id: int):
+
+        try:
+            q = Questions.objects.select_related("group").get(id=question_id, group_id=group_id)
+            answers = [{"id": a.id, "text": a.answer} for a in q.answers.all()]
+            return {"id": q.id, "text": q.question, "answers": answers}
+        except Questions.DoesNotExist:
+            return None
+
+    @database_sync_to_async
+    def _check_answer_and_save_safe(self, question_id: int, answer_id: int, user_id: int, group_id: int):
+
+        try:
+            with transaction.atomic():
+                question = Questions.objects.select_for_update().get(id=question_id, group_id=group_id)
+                answer = Answer.objects.get(id=answer_id, question_id=question.id)
+
+                if UserAnswers.objects.filter(user_id=user_id, question_id=question.id).exists():
+                    is_correct = answer.is_correct
+                    return (0, is_correct)
+
+                score = 10 if answer.is_correct else 0
+
+                UserAnswers.objects.create(
+                    user_id=user_id,
+                    question=question,
+                    answer=answer,
+                    is_correct=answer.is_correct,
+                    score=score,
+                )
+
+                result, created = Result.objects.get_or_create(
+                    user_id=user_id,
+                    group=question.group,
+                    defaults={"score": 0},
+                )
+                Result.objects.filter(id=result.id).update(score=F("score") + score)
+
+                return (score, answer.is_correct)
+        except (Questions.DoesNotExist, Answer.DoesNotExist):
+            return None
+
+    @database_sync_to_async
+    def _get_leaderboard(self, group_id: int):
+        qs = (
+            Result.objects.filter(group_id=group_id)
+            .values("user__username")
+            .annotate(score=Sum("score"))
+            .order_by("-score")
+        )
+        return list(qs)
+
+    @database_sync_to_async
+    def _get_all_results(self, user_id: int):
+
+        qs = (
+            Result.objects.filter(user_id=user_id)
+            .values("group__name", "score", "group__start_time", "group__end_time")
+            .order_by("-group__start_time")
+        )
+        return list(qs)

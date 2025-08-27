@@ -27,12 +27,13 @@ class GroupEditor(APIView):
     serializer_class = GroupSerializer
 
     def get(self, request, group_id):
-        group = Group.objects.get(code=group_id)
+        group = get_object_or_404(Group, code=group_id)
         serializers = GroupSerializer(group)
         return Response(serializers.data)
 
     def put(self, request, group_id):
-        group = Group.objects.create(code=group_id)
+
+        group = get_object_or_404(Group, code=group_id)
         serializer = GroupSerializer(instance=group, data=request.data)
         if serializer.is_valid():
             serializer.save(admin=request.user)
@@ -40,10 +41,9 @@ class GroupEditor(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, group_id):
-        group = Group.objects.get(code=group_id)
+        group = get_object_or_404(Group, code=group_id)
         group.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
-
 
 class AddQuestion(APIView):
     serializer_class = QuestionsSerializer
