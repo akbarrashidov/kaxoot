@@ -45,7 +45,7 @@ class GroupSerializer(serializers.ModelSerializer):
     class Meta:
         model = Group
         fields = '__all__'
-        read_only_fields = ('id', 'admin')
+        read_only_fields = ('id', 'admin', 'start_time', "end_time")
     def create(self, validated_data):
         questions = validated_data.pop('questions', [])
         group = Group.objects.create(**validated_data)
