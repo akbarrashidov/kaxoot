@@ -11,16 +11,13 @@ class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ("username", "first_name", "last_name", "password")
-<<<<<<< HEAD
 
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
             raise serializers.ValidationError("Bunday foydalanuvchi mavjud")
         return value
 
-=======
-        ref_name = "CustomRegister"
->>>>>>> b213e97 (WS21)
+
     def create(self, validated_data):
         validated_data["password"] = make_password(validated_data["password"])
         return User.objects.create(**validated_data)

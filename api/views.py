@@ -103,8 +103,7 @@ class Result(APIView):
         for gu in groups:
             group = gu.group
             score = (
-                UserAnswers.objects.filter(user=user, question__group=group)
-                .aggregate(total=Sum("score"))["total"] or 0
+                Result.objects.filter(group = group, user=user).score('score')
             )
             rank_obj = RankGroup.objects.filter(group=group, user=user).first()
             rank = rank_obj.rank if rank_obj else None

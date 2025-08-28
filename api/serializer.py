@@ -27,10 +27,7 @@ class QuestionsSerializer(serializers.ModelSerializer):
         if len(answers) != 4:
             raise serializers.ValidationError("Har bir savolda aniq 4ta javob bo‘lishi kerak.")
 
-<<<<<<< HEAD
-=======
 
->>>>>>> b213e97 (WS21)
         true_count = sum(1 for ans in answers if ans.get('is_correct') == True)
         if true_count != 1:
             raise serializers.ValidationError("Har bir savolda faqat bitta javob True bo‘lishi kerak.")
@@ -67,12 +64,10 @@ class GroupSerializer(serializers.ModelSerializer):
         for question in questions:
             Questions.objects.create(group=group, **question)
         return group
-<<<<<<< HEAD
-=======
 
 class ResultSerializer(serializers.Serializer):
     group_id = serializers.IntegerField()
     group_name = serializers.CharField()
     rank = serializers.IntegerField(allow_null=True)
     score = serializers.IntegerField()
->>>>>>> b213e97 (WS21)
+

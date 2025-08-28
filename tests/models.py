@@ -40,7 +40,7 @@ class Result(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     group = models.ForeignKey('Group', on_delete=models.CASCADE)
     score = models.IntegerField()
-
+    rank = models.IntegerField(default = 0)
     def __str__(self):
         return self.user.username
 class GroupUsers(models.Model):
@@ -56,11 +56,5 @@ class UserAnswers(models.Model):
     is_correct = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     score = models.IntegerField()
-    def __str__(self):
-        return self.user.username
-class RankGroup(models.Model):
-    group = models.ForeignKey(Group, on_delete=models.CASCADE)
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    rank = models.IntegerField()
     def __str__(self):
         return self.user.username

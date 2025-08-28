@@ -3,17 +3,16 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.utils import timezone
 from django.db import transaction
-from django.db.models import F, Sum
+from django.db.models import Sum
 
 from tests.models import (
     User as AppUser,
     Group,
     Questions,
     Answer,
-    Result,
-    GroupUsers,
     UserAnswers,
-    RankGroup,
+    GroupUsers,
+    Result,
 )
 
 
@@ -51,10 +50,7 @@ class TestConsumer(AsyncWebsocketConsumer):
         if getattr(self, "app_user", None):
             await self.channel_layer.group_send(
                 self.room_group_name,
-                {
-                    "type": "system_message",
-                    "payload": {"message": f"{self.app_user.username} chiqib ketdi"},
-                },
+                {"type": "system_message", "payload": {"message": f"{self.app_user.username} chiqib ketdi"}},
             )
 
     async def receive(self, text_data):
@@ -63,7 +59,7 @@ class TestConsumer(AsyncWebsocketConsumer):
             action = data.get("action")
 
             if not action:
-                return await self._send_error("action yo‘q")
+                return await self._send_error("Action yo‘q")
 
             if action == "start_test":
                 if not self._is_admin():
@@ -102,72 +98,73 @@ class TestConsumer(AsyncWebsocketConsumer):
 
     # ---------------------- TEST START ----------------------
     async def _start_test(self):
-        group_id = await self._mark_group_started(self.group_obj.id)
+        await self._mark_group_started(self.group_obj.id)
         await self.channel_layer.group_send(
             self.room_group_name,
             {
                 "type": "test_started",
-                "payload": {"message": "Test boshlandi!", "group_id": group_id},
+                "payload": {"message": "Test boshlandi!", "group_id": self.group_obj.id},
             },
         )
-        question = await self._get_first_question(group_id)
+        if self._is_admin():
+            group_users = await self._get_all_group_users(self.group_obj.id)
+            await self._send_json({
+                "type": "admin_view",
+                "students": group_users
+            })
+        question = await self._get_first_question(self.group_obj.id)
         if question:
             await self.channel_layer.group_send(
                 self.room_group_name,
                 {"type": "send_question", "payload": {"question": question}},
             )
 
-    # ---------------------- QUESTION BROADCAST ----------------------
     async def _broadcast_question(self, question_id: int):
         q = await self._get_question_data_safe(question_id, self.group_obj.id)
-        if not q:
-            return await self._send_error("Savol topilmadi yoki bu roomga tegishli emas.")
 
         if "detail" in q:
-<<<<<<< HEAD
             result = await self._get_user_result(self.app_user.id, self.group_obj.id)
-            await self._send_json(
-                {"type": "test_finished", "score": result.get("score")}
-            )
-=======
-            user_result = await self._get_user_result(self.app_user.id, self.group_obj.id)
-            await self._send_json({"type": "test_finished", "score": user_result.get("score", 0)})
->>>>>>> b213e97 (WS21)
-            return
 
+            # Faqat studentlarga score yuboriladi
+            payload = {"message": "Test tugadi!"}
+            if not self._is_admin():
+                payload["score"] = result.get("score")
+
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    "type": "test_finished_event",
+                    "payload": payload
+                }
+            )
+            return  # test tugadi, savol yuborilmaydi
+
+        # Agar savol mavjud bo‘lsa, barcha guruhga yuborish
         await self.channel_layer.group_send(
             self.room_group_name,
             {"type": "send_question", "payload": {"question": q}},
         )
 
-<<<<<<< HEAD
     async def _finish_test(self):
+        await self._mark_group_finished(self.group_obj.id)
         group_results = await self._mark_group_finished_and_collect_results(self.group_obj.id)
-        if self._is_admin():
-            await self._send_json(
-                {"type": "final_results", "results": group_results}
-            )
-
-=======
-    # ---------------------- HANDLE SUBMIT ANSWER ----------------------
->>>>>>> b213e97 (WS21)
-    async def _handle_submit_answer(self, question_id: int, answer_id: int):
-        save_info = await self._check_answer_and_save_safe(
-            question_id=question_id,
-            answer_id=answer_id,
-            user_id=self.app_user.id,
-            group_id=self.group_obj.id,
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {"type": "final_results", "results": group_results},
         )
 
+    # ---------------------- HANDLE SUBMIT ANSWER ----------------------
+    async def _handle_submit_answer(self, question_id: int, answer_id: int):
+        # Test faol yoki yo'qligini tekshirish
+        group = await self._get_group_obj(self.group_obj.id)
+        if not group.is_active:
+            return await self._send_error("Test tugagan, javob yuborolmaysiz.")
+
+        save_info = await self._check_answer_and_save_safe(question_id, answer_id, self.app_user.id, self.group_obj.id)
         if isinstance(save_info, dict):
             return await self._send_json({"type": "error", "error": save_info.get("detail")})
 
         score, is_correct = save_info
-
-<<<<<<< HEAD
-=======
-        # Studentga feedback
->>>>>>> b213e97 (WS21)
         await self._send_json({
             "type": "answer_feedback",
             "question_id": question_id,
@@ -176,10 +173,6 @@ class TestConsumer(AsyncWebsocketConsumer):
             "message": "To‘g‘ri ✅" if is_correct else "Xato ❌"
         })
 
-<<<<<<< HEAD
-=======
-        # Admin uchun barcha studentlar natijasi
->>>>>>> b213e97 (WS21)
         leaderboard = await self._get_leaderboard(self.group_obj.id)
         await self.channel_layer.group_send(
             self.room_group_name,
@@ -194,23 +187,6 @@ class TestConsumer(AsyncWebsocketConsumer):
                 },
             },
         )
-<<<<<<< HEAD
-=======
-
-    # ---------------------- FINISH TEST ----------------------
-    async def _finish_test(self):
-        group_results = await self._mark_group_finished_and_collect_results(self.group_obj.id)
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {"type": "final_results", "results": group_results}
-        )
-
-    async def final_results(self, event):
-        await self._send_json({
-            "type": "final_results",
-            "results": event["results"]
-        })
->>>>>>> b213e97 (WS21)
 
     # ---------------------- EVENT HANDLERS ----------------------
     async def system_message(self, event):
@@ -223,18 +199,13 @@ class TestConsumer(AsyncWebsocketConsumer):
         await self._send_json({"type": "question", **event["payload"]})
 
     async def student_answer(self, event):
-<<<<<<< HEAD
-
         if self._is_admin():
             await self._send_json({"type": "student_answer", **event["payload"]})
 
-
-=======
-        if self._is_admin():
-            await self._send_json({"type": "student_answer", **event["payload"]})
+    async def final_results(self, event):
+        await self._send_json({"type": "final_results", "results": event["results"]})
 
     # ---------------------- HELPERS ----------------------
->>>>>>> b213e97 (WS21)
     async def _send_error(self, message: str):
         await self.send(text_data=json.dumps({"type": "error", "error": message}))
 
@@ -244,22 +215,22 @@ class TestConsumer(AsyncWebsocketConsumer):
     def _is_admin(self) -> bool:
         return bool(self.app_user and self.app_user.is_admin)
 
+    async def test_finished_event(self, event):
+        await self._send_json({"type": "test_finished", **event["payload"]})
+
     # ---------------------- DATABASE SYNC METHODS ----------------------
     @database_sync_to_async
     def _map_to_app_user(self, auth_user):
-        try:
-            if not auth_user or not getattr(auth_user, "is_authenticated", False):
-                return None
-            username = getattr(auth_user, "username", None)
-            if not username:
-                return None
-            app_user, _ = AppUser.objects.get_or_create(
-                username=username,
-                defaults={"is_admin": getattr(auth_user, "is_staff", False)},
-            )
-            return app_user
-        except Exception:
+        if not auth_user or not getattr(auth_user, "is_authenticated", False):
             return None
+        username = getattr(auth_user, "username", None)
+        if not username:
+            return None
+        app_user, _ = AppUser.objects.get_or_create(
+            username=username,
+            defaults={"is_admin": getattr(auth_user, "is_staff", False)},
+        )
+        return app_user
 
     @database_sync_to_async
     def _ensure_membership(self, room_code: str, user_id: int):
@@ -270,89 +241,80 @@ class TestConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def _mark_group_started(self, group_id: int):
         Group.objects.filter(id=group_id).update(is_active=True, start_time=timezone.now())
-        return group_id
+
+    @database_sync_to_async
+    def _mark_group_finished(self, group_id: int):
+        Group.objects.filter(id=group_id).update(is_active=False)
 
     @database_sync_to_async
     def _mark_group_finished_and_collect_results(self, group_id: int):
-        qs = (
-            UserAnswers.objects
-            .filter(question__group=group_id)
-            .values('user_id', 'user__username')
-            .annotate(score=Sum('score'))
-            .order_by('-score')
-        )
+        qs = (UserAnswers.objects
+              .filter(question__group=group_id)
+              .values('user_id', 'user__username')
+              .annotate(score=Sum('score'))
+              .order_by('-score'))
 
         with transaction.atomic():
-            RankGroup.objects.filter(group_id=group_id).delete()
+            Result.objects.filter(group_id=group_id).delete()
             for idx, r in enumerate(qs, start=1):
-                RankGroup.objects.create(
+                Result.objects.create(
                     group_id=group_id,
                     user_id=r["user_id"],
+                    score=r["score"] or 0,
                     rank=idx
                 )
-
         return list(qs)
 
     @database_sync_to_async
+    def _get_all_group_users(self, group_id: int):
+        users = GroupUsers.objects.filter(group_id=group_id).select_related("user")
+        return [{"username": u.user.username} for u in users]
+    @database_sync_to_async
+    def _get_group_obj(self, group_id: int):
+        return Group.objects.get(id=group_id)
+
+    @database_sync_to_async
     def _get_question_data_safe(self, question_id: int, group_id: int):
-<<<<<<< HEAD
-        try:
-            q = Questions.objects.filter(id__gt=question_id, group=group_id).order_by("id").first()
-            if q:
-                answers = [{"id": a.id, "text": a.answer} for a in Answer.objects.filter(question=q.id)]
-                return {"id": q.id, "text": q.question, "answers": answers}
-            else:
-                return {"detail": "Test tugadi"}
-        except Questions.DoesNotExist:
-            return None
-=======
         q = Questions.objects.filter(id__gt=question_id, group=group_id).order_by("id").first()
         if q:
             answers = [{"id": a.id, "text": a.answer} for a in Answer.objects.filter(question=q.id)]
             return {"id": q.id, "text": q.question, "answers": answers}
         return {"detail": "Test tugadi"}
->>>>>>> b213e97 (WS21)
 
     @database_sync_to_async
     def _check_answer_and_save_safe(self, question_id: int, answer_id: int, user_id: int, group_id: int):
         try:
             with transaction.atomic():
-                question = Questions.objects.select_for_update().get(id=question_id, group_id=group_id)
+                question = Questions.objects.get(id=question_id, group_id=group_id)
                 answer = Answer.objects.get(id=answer_id, question_id=question.id)
-<<<<<<< HEAD
 
-                # Oldin javob bergan bo‘lsa qayta yozmaymiz
-                if UserAnswers.objects.filter(user_id=user_id, question_id=question.id).exists():
-                    is_correct = answer.is_correct
-                    return (0, is_correct)
 
-                score = 0
-                if answer.is_correct:
-                    score = 10
-=======
-                score = 10 if answer.is_correct else 0
->>>>>>> b213e97 (WS21)
-
-                user_answer, created = UserAnswers.objects.get_or_create(
-                    user_id=user_id,
-                    question=question,
-                    defaults={"answer": answer, "is_correct": answer.is_correct, "score": score}
-                )
-                if not created:
-                    return {"detail": "Oldin javob bergansiz!"}
-
-                return (score, answer.is_correct)
+                q = UserAnswers.objects.filter(user_id=user_id, question_id=question.id).first()
+                if not q:
+                    if answer.is_correct:
+                        score = 10
+                        UserAnswers.objects.create(
+                            user_id=user_id,
+                            question=question,
+                            answer=answer,
+                            is_correct=answer.is_correct,
+                            score=score
+                        )
+                    else:
+                        score = 0
+                    return (score, answer.is_correct)
+                else:
+                    return {"detail": "oldin javob bergansiz"}
         except (Questions.DoesNotExist, Answer.DoesNotExist):
             return None
 
     @database_sync_to_async
-    def _get_leaderboard(self, group_id: int):
-        qs = (UserAnswers.objects
-              .filter(question__group=group_id)
-              .values('user_id__username')
-              .annotate(score=Sum('score'))
-              .order_by('-score'))
-        return list(qs)
+    def _get_first_question(self, group_id: int):
+        question = Questions.objects.filter(group=group_id).order_by("id").first()
+        if not question:
+            return None
+        answers = [{"id": a.id, "text": a.answer} for a in Answer.objects.filter(question=question.id)]
+        return {"id": question.id, "text": question.question, "answers": answers}
 
     @database_sync_to_async
     def _get_user_result(self, user_id: int, group_id: int):
@@ -360,9 +322,10 @@ class TestConsumer(AsyncWebsocketConsumer):
         return {"score": res['score'] or 0}
 
     @database_sync_to_async
-    def _get_first_question(self, group_id):
-        question = Questions.objects.filter(group=group_id).order_by("id").first()
-        if not question:
-            return None
-        answers = [{"id": a.id, "text": a.answer} for a in Answer.objects.filter(question=question.id)]
-        return {"id": question.id, "text": question.question, "answers": answers}
+    def _get_leaderboard(self, group_id: int):
+        qs = (UserAnswers.objects
+              .filter(question__group=group_id)
+              .values('user__username')
+              .annotate(score=Sum('score'))
+              .order_by('-score'))
+        return list(qs)
