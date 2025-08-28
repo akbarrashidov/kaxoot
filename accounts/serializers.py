@@ -11,12 +11,16 @@ class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ("username", "first_name", "last_name", "password")
+<<<<<<< HEAD
 
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
             raise serializers.ValidationError("Bunday foydalanuvchi mavjud")
         return value
 
+=======
+        ref_name = "CustomRegister"
+>>>>>>> b213e97 (WS21)
     def create(self, validated_data):
         validated_data["password"] = make_password(validated_data["password"])
         return User.objects.create(**validated_data)
@@ -26,7 +30,8 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
     access = serializers.CharField(read_only=True)
     refresh = serializers.CharField(read_only=True)
-
+    class Meta:
+        ref_name = "CustomLogin"
     def validate(self, data):
         username = data.get("username")
         password = data.get("password")
@@ -46,8 +51,8 @@ class AdminGoogleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ("username", "first_name", "last_name", "role", "access", "refresh")
-
+        fields = ("username", "first_name", "last_name", "access", "refresh")
+        ref_name = "CustomAdminGoogle"
     def create(self, validated_data):
         user = User.objects.create(**validated_data)
         refresh = RefreshToken.for_user(user)

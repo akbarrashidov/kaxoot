@@ -49,27 +49,35 @@ INSTALLED_APPS = [
     'allauth.socialaccount.providers.google',
     'dj_rest_auth',
     'dj_rest_auth.registration',
+    'drf_spectacular',
 ]
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
-    )
+    ),
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
-
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'DRF Kursi',
+    'DESCRIPTION': 'Test ishlash uchun platforma',
+    'VERSION': '1.0.0',
+}
 from datetime import timedelta
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=364),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=132),
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
 SITE_ID = 1
 
 ACCOUNT_USER_MODEL_USERNAME_FIELD = 'username'
-ACCOUNT_EMAIL_REQUIRED = True
+
 ACCOUNT_EMAIL_VERIFICATION = 'optional'
-ACCOUNT_AUTHENTICATION_METHOD = 'username'
+ACCOUNT_LOGIN_METHODS = {"username"}
+ACCOUNT_SIGNUP_FIELDS = ["email*", "username*", "password1*", "password2*"]
+
 
 SOCIALACCOUNT_PROVIDERS = {
     'google': {

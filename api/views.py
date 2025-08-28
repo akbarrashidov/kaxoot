@@ -6,10 +6,10 @@ from rest_framework.response import Response
 from .serializer import *
 from tests.models import *
 from django.db.models import Sum
-
+from .permission import *
+from drf_spectacular.utils import extend_schema
 class GroupAdd(APIView):
     serializer_class = GroupSerializer
-
     def get(self, request):
         groups = Group.objects.all()
         serializers = GroupSerializer(groups, many=True)
@@ -25,7 +25,7 @@ class GroupAdd(APIView):
 
 class GroupEditor(APIView):
     serializer_class = GroupSerializer
-
+    permission_classes = [IsAuthenticated, IsRoomOwner]
     def get(self, request, group_id):
         group = get_object_or_404(Group, code=group_id)
         serializers = GroupSerializer(group)
@@ -47,28 +47,35 @@ class GroupEditor(APIView):
 
 class AddQuestion(APIView):
     serializer_class = QuestionsSerializer
-
     def get(self, request, group_id):
         questions = Questions.objects.filter(group__code=group_id)
         serializers = QuestionsSerializer(questions, many=True)
         return Response(serializers.data, status=status.HTTP_200_OK)
-
     def post(self, request, group_id):
+        group = get_object_or_404(Group, code=group_id)
+        if group.admin != request.user:
+            return Response(
+                {"detail": "Faqat xona egasi savol qo‘shishi mumkin."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         serializer = QuestionsSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            group = Group.objects.get(code=group_id)
             serializer.save(group=group)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 class EditQuestion(APIView):
     serializer_class = QuestionsSerializer
     def get(self, request, group_id, question_id):
         question = Questions.objects.get(id=question_id, group__code=group_id)
         serializers = QuestionsSerializer(question)
         return Response(serializers.data)
-
     def put(self, request, group_id, question_id):
+        group = get_object_or_404(Group, code=group_id)
+        if group.admin != request.user:
+            return Response(
+                {"detail": "Faqat xona egasi savol qo‘shishi mumkin."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         question = Questions.objects.get(id=question_id, group__code=group_id)
         serializers = QuestionsSerializer(instance=question, data=request.data, context={'request': request})
         if serializers.is_valid():
@@ -76,16 +83,35 @@ class EditQuestion(APIView):
             return Response(serializers.data, status=status.HTTP_200_OK)
         return Response(serializers.errors, status=status.HTTP_400_BAD_REQUEST)
     def delete(self, request, group_id, question_id):
+        group = get_object_or_404(Group, code=group_id)
+        if group.admin != request.user:
+            return Response(
+                {"detail": "Faqat xona egasi savol qo‘shishi mumkin."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         question = Questions.objects.get(id=question_id, group__code=group_id)
         question.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
-class AllQuestions(APIView):
-    serializer_class = QuestionsSerializer
-    def get(self, request):
-        questions = Questions.objects.all()
-        serializers = QuestionsSerializer(questions, many=True)
-        return Response(serializers.data, status = status.HTTP_200_OK)
-
 class Result(APIView):
-    def get(self, user_id):
-        result = Result.objects.filter(user = user_id)
+    serializer_class = ResultSerializer
+    @extend_schema(responses=ResultSerializer(many=True))
+
+    def get(self, request):
+        user = request.user
+        results = []
+        groups = GroupUsers.objects.filter(user=user).select_related("group")
+        for gu in groups:
+            group = gu.group
+            score = (
+                UserAnswers.objects.filter(user=user, question__group=group)
+                .aggregate(total=Sum("score"))["total"] or 0
+            )
+            rank_obj = RankGroup.objects.filter(group=group, user=user).first()
+            rank = rank_obj.rank if rank_obj else None
+            results.append({
+                "group_id": group.id,
+                "group_name": group.name,
+                "rank": rank,
+                "score": score,
+            })
+        return Response(results)
