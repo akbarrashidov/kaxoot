@@ -6,12 +6,10 @@ from channels.auth import AuthMiddlewareStack
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'kaxoot.settings')
 
-# ⚡️ Django apps registry shu yerda ishga tushadi
 django_asgi_app = get_asgi_application()
 
-# ✅ Endi middleware va routingni import qilamiz
 from middlewere.jwt import JWTAuthMiddleware
-from tests import routing as test_routing   # sizning websocket routingi shu yerda bo‘lishi kerak
+from tests import routing as test_routing
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,

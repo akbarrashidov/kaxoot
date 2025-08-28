@@ -5,13 +5,17 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 User = get_user_model()
 
-# Mobile users
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True)
 
     class Meta:
         model = User
         fields = ("username", "first_name", "last_name", "password")
+
+    def validate_username(self, value):
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError("Bunday foydalanuvchi mavjud")
+        return value
 
     def create(self, validated_data):
         validated_data["password"] = make_password(validated_data["password"])
@@ -36,7 +40,6 @@ class LoginSerializer(serializers.Serializer):
             "refresh": str(refresh),
         }
 
-# Admin Google OAuth (token yaratish)
 class AdminGoogleSerializer(serializers.ModelSerializer):
     access = serializers.CharField(read_only=True)
     refresh = serializers.CharField(read_only=True)
@@ -51,3 +54,20 @@ class AdminGoogleSerializer(serializers.ModelSerializer):
         user.access = str(refresh.access_token)
         user.refresh = str(refresh)
         return user
+
+class ProfileUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ("username","first_name", "last_name")
+
+    def update(self, instance, validated_data):
+        instance.username = validated_data.get("username", instance.username)
+        instance.first_name = validated_data.get("first_name", instance.first_name)
+        instance.last_name = validated_data.get("last_name", instance.last_name)
+        instance.save()
+        return instance
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True)

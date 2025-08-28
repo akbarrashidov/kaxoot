@@ -122,15 +122,14 @@ class TestConsumer(AsyncWebsocketConsumer):
             )
 
     async def _broadcast_question(self, question_id: int):
-        q = await self._get_question_data_safe(question_id, self.group_obj.id, self.app_user.id)
+        q = await self._get_question_data_safe(question_id, self.group_obj.id)
         if not q:
             return await self._send_error("Savol topilmadi yoki bu roomga tegishli emas.")
 
-        # Agar savollar tugagan bo‘lsa → faqat o‘z natijasini jo‘natamiz
         if "detail" in q:
             result = await self._get_user_result(self.app_user.id, self.group_obj.id)
             await self._send_json(
-                {"type": "test_finished", "score": result.get("score", 0)}
+                {"type": "test_finished", "score": result.get("score")}
             )
             return
 
@@ -141,7 +140,6 @@ class TestConsumer(AsyncWebsocketConsumer):
 
     async def _finish_test(self):
         group_results = await self._mark_group_finished_and_collect_results(self.group_obj.id)
-        # faqat admin uchun barcha natija
         if self._is_admin():
             await self._send_json(
                 {"type": "final_results", "results": group_results}
@@ -159,23 +157,28 @@ class TestConsumer(AsyncWebsocketConsumer):
 
         score, is_correct = save_info
 
+        await self._send_json({
+            "type": "answer_feedback",
+            "question_id": question_id,
+            "is_correct": is_correct,
+            "score": score,
+            "message": "To‘g‘ri ✅" if is_correct else "Xato ❌"
+        })
+
         leaderboard = await self._get_leaderboard(self.group_obj.id)
-        if self._is_admin():
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {
-                    "type": "student_answer",
-                    "payload": {
-                        "user": self.app_user.username,
-                        "question_id": question_id,
-                        "score": score,
-                        "is_correct": is_correct,
-                        "leaderboard": leaderboard,
-                    },
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                "type": "student_answer",
+                "payload": {
+                    "user": self.app_user.username,
+                    "question_id": question_id,
+                    "score": score,
+                    "is_correct": is_correct,
+                    "leaderboard": leaderboard,
                 },
-            )
-
-
+            },
+        )
 
     async def system_message(self, event):
         await self._send_json({"type": "message", **event["payload"]})
@@ -187,11 +190,10 @@ class TestConsumer(AsyncWebsocketConsumer):
         await self._send_json({"type": "question", **event["payload"]})
 
     async def student_answer(self, event):
-        # bu faqat adminlarga yuboriladi
+
         if self._is_admin():
             await self._send_json({"type": "student_answer", **event["payload"]})
 
-    # --------- helpers ---------
 
     async def _send_error(self, message: str):
         await self.send(text_data=json.dumps({"type": "error", "error": message}))
@@ -249,7 +251,7 @@ class TestConsumer(AsyncWebsocketConsumer):
         return list(qs)
 
     @database_sync_to_async
-    def _get_question_data_safe(self, question_id: int, group_id: int, user_id: int):
+    def _get_question_data_safe(self, question_id: int, group_id: int):
         try:
             q = Questions.objects.filter(id__gt=question_id, group=group_id).order_by("id").first()
             if q:
@@ -267,11 +269,14 @@ class TestConsumer(AsyncWebsocketConsumer):
                 question = Questions.objects.select_for_update().get(id=question_id, group_id=group_id)
                 answer = Answer.objects.get(id=answer_id, question_id=question.id)
 
+                # Oldin javob bergan bo‘lsa qayta yozmaymiz
                 if UserAnswers.objects.filter(user_id=user_id, question_id=question.id).exists():
                     is_correct = answer.is_correct
                     return (0, is_correct)
 
-                score = 10 if answer.is_correct else 0
+                score = 0
+                if answer.is_correct:
+                    score = 10
 
                 UserAnswers.objects.create(
                     user_id=user_id,

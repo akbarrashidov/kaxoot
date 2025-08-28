@@ -24,11 +24,9 @@ class QuestionsSerializer(serializers.ModelSerializer):
     def validate(self, data):
         answers = self.initial_data.get('answers', [])
 
-        # Har bir savolda aniq 4 ta javob bo'lishi kerak
         if len(answers) != 4:
             raise serializers.ValidationError("Har bir savolda aniq 4ta javob bo‘lishi kerak.")
 
-        # Javoblardan faqat bittasi True bo'lishi kerak
         true_count = sum(1 for ans in answers if ans.get('is_correct') == True)
         if true_count != 1:
             raise serializers.ValidationError("Har bir savolda faqat bitta javob True bo‘lishi kerak.")
@@ -65,97 +63,3 @@ class GroupSerializer(serializers.ModelSerializer):
         for question in questions:
             Questions.objects.create(group=group, **question)
         return group
-# views.py
-from django.shortcuts import get_object_or_404
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from .serializer import *
-from tests.models import *
-
-class GroupAdd(APIView):
-    serializer_class = GroupSerializer
-
-    def get(self, request):
-        groups = Group.objects.all()
-        serializers = GroupSerializer(groups, many=True)
-        return Response(serializers.data)
-
-    def post(self, request):
-        serializers = GroupSerializer(data=request.data, context={'request': request})
-        if serializers.is_valid():
-            serializers.save(admin=request.user)
-            return Response(serializers.data, status=status.HTTP_201_CREATED)
-        return Response(serializers.errors, status=status.HTTP_400_BAD_REQUEST)
-
-class GroupEditor(APIView):
-    serializer_class = GroupSerializer
-
-    def get(self, request, group_id):
-        group = get_object_or_404(Group, code=group_id)
-        serializers = GroupSerializer(group)
-        return Response(serializers.data)
-
-    def put(self, request, group_id):
-        group = get_object_or_404(Group, code=group_id)
-        serializer = GroupSerializer(instance=group, data=request.data)
-        if serializer.is_valid():
-            serializer.save(admin=request.user)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    def delete(self, request, group_id):
-        group = get_object_or_404(Group, code=group_id)
-        group.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-class AddQuestion(APIView):
-    serializer_class = QuestionsSerializer
-
-    def get(self, request, group_id):
-        questions = Questions.objects.filter(group__code=group_id)
-        serializers = QuestionsSerializer(questions, many=True)
-        return Response(serializers.data, status=status.HTTP_200_OK)
-
-    def post(self, request, group_id):
-        serializer = QuestionsSerializer(data=request.data, context={'request': request})
-        if serializer.is_valid():
-            group = get_object_or_404(Group, code=group_id)
-            serializer.save(group=group)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-class EditQuestion(APIView):
-    serializer_class = QuestionsSerializer
-
-    def get(self, request, group_id, question_id):
-        question = get_object_or_404(Questions, id=question_id, group__code=group_id)
-        serializers = QuestionsSerializer(question)
-        return Response(serializers.data, status=status.HTTP_200_OK)
-
-    def put(self, request, group_id, question_id):
-        question = get_object_or_404(Questions, id=question_id, group__code=group_id)
-        serializers = QuestionsSerializer(instance=question, data=request.data, context={'request': request})
-        if serializers.is_valid():
-            serializers.save()
-            return Response(serializers.data, status=status.HTTP_200_OK)
-        return Response(serializers.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    def delete(self, request, group_id, question_id):
-        question = get_object_or_404(Questions, id=question_id, group__code=group_id)
-        question.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-class AllQuestions(APIView):
-    serializer_class = QuestionsSerializer
-
-    def get(self, request):
-        questions = Questions.objects.all()
-        serializers = QuestionsSerializer(questions, many=True)
-        return Response(serializers.data, status=status.HTTP_200_OK)
-
-class Result(APIView):
-    def get(self, request, user_id):
-        results = Result.objects.filter(user=user_id)
-        serializers = ResultSerializer(results, many=True)
-        return Response(serializers.data, status=status.HTTP_200_OK)
